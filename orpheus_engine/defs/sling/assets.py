@@ -4,6 +4,7 @@ from typing import Any
 from urllib.parse import urlparse, parse_qs
 import dagster as dg
 import ipaddress
+import logging
 import os
 import base64
 import psycopg2
@@ -13,6 +14,8 @@ from ._helpers import (
     _ensure_target_indexes,
     _ensure_incremental_target_indexes,
 )
+
+_logger = logging.getLogger(__name__)
 
 def _validate_sslmode_disable_is_tailscale(env_var_name: str) -> None:
     """
@@ -131,6 +134,39 @@ warehouse_db_connection = SlingConnectionResource(
 
 
 
+def _isolate_missing_program_connection(conn: SlingConnectionResource) -> SlingConnectionResource:
+    """
+    Keep one program's missing env var from breaking every job that uses Sling.
+
+    All program connections share the single `sling` resource. Dagster resolves
+    every EnvVar in that resource's config before a run starts, so one unset
+    `<PROGRAM>_DATABASE_URL` makes run-config validation fail for EVERY job that
+    includes any Sling asset (materialize_all_assets_job, materialize_frequent_job).
+    That is what froze the whole warehouse from 2026-10-09 to 2026-10-13, when
+    `WRONG_TOOL_DATABASE_URL` was added in code but not in the prod environment.
+
+    When the env var is unset, swap in a placeholder URL on an `.invalid` host
+    (RFC 2606: it never resolves). Only that program's mirror asset fails, with an
+    error that names the missing variable; everything else keeps syncing.
+    """
+    env_var_name = getattr(conn.connection_string, "env_var_name", None)
+    if not env_var_name or os.getenv(env_var_name):
+        return conn
+
+    host = f"missing-env-{env_var_name.lower().replace('_', '-')}.invalid"
+    _logger.warning(
+        "Sling connection %s: env var %s is not set; its mirror asset will fail "
+        "until it is configured. Other Sling assets are unaffected.",
+        conn.name,
+        env_var_name,
+    )
+    return SlingConnectionResource(
+        name=conn.name,
+        type=conn.type,
+        connection_string=f"postgres://{host}:5432/unset",
+    )
+
+
 # --- Auto-discover program connections and assets from programs/ ---
 import pkgutil as _pkgutil
 import importlib as _importlib
@@ -145,6 +181,7 @@ for _, _mod_name, _ in _pkgutil.iter_modules(_programs_pkg.__path__):
         continue
     _conn = getattr(_mod, f"{_mod_name}_db_connection", None)
     if _conn is not None:
+        _conn = _isolate_missing_program_connection(_conn)
         _program_connections.append(_conn)
         # Validate SSL configuration
         if hasattr(_conn, 'connection_string') and hasattr(_conn.connection_string, 'env_var_name'):
