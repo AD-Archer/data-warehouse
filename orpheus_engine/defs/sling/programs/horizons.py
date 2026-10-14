@@ -16,86 +16,53 @@ horizons_replication_config = {
     "source": "HORIZONS_DB",
     "target": "WAREHOUSE_DB",
 
+    # Create warehouse tables for streams that are currently empty, so every
+    # source table exists in the warehouse.
+    "env": {"SLING_ALLOW_EMPTY": True},
+
+    # Every stream is full-refresh, so the mirror matches the source exactly
+    # after each run. Horizons changes rows without bumping updated_at (soft
+    # deletes, Joe fraud fields, screenshot/readme URLs), mutates rows in
+    # "append-only" tables (transactions.fulfilled_at,
+    # user_sessions.expires_at) and hard-deletes rows (including
+    # submission_audit_logs); incremental mirrors drifted on thousands of rows.
+    # Incremental streams also never backfill newly synced columns and keep
+    # stale column types (projects broke on 2026-10-01 when
+    # hours_justification outgrew varchar(500)). The largest table,
+    # submission_audit_logs, is ~600k rows and copies in under a minute.
     "defaults": {
         "mode": "full-refresh",
         "object": "horizons.{stream_table}",
     },
 
+    # All columns sync except live credentials.
     "streams": {
         "public.*": None,
 
-        # Mutable tables are full-refresh (all are <25k rows). Horizons writes rows
-        # without bumping updated_at (soft deletes, Joe fraud fields,
-        # screenshot/readme URLs), mutates "append-only" tables
-        # (transactions.fulfilled_at, user_sessions.expires_at), and hard-
-        # deletes rows -- incremental mirrors of these tables drifted on
-        # thousands of rows. Incremental also never backfills columns added
-        # to a select list, and keeps stale column types (projects broke on
-        # 2026-10-01 when hours_justification outgrew varchar(500)).
-        "public.projects": {
-            "select": [
-                "-id", "-name", "-description", "-playable_url", "-code_url",
-                "-image_url", "-hackatime_names", "-status", "-shipped",
-                "-total_hours", "-shipped_at", "-reviewed",
-                "-past_approved_hours", "-coins_earned", "-admin_feedback",
-                "-hour_justification", "-reviewed_at",
-                "-reviewed_by_user_id", "-fraud_flag", "-baseline_hours",
-                "-hackatime_hours", "-airtable_record_id", "-bricks_earned",
-                "-ysws_record_id", "-parent_project_id", "-ship_kind",
-                "-blocked", "-last_shipped_hours", "-reship_update",
-            ],
-        },
-        "public.sticker_tokens": {
-            "select": [
-                "id", "email", "rsvpNumber", "isUsed",
-                "usedAt", "createdAt", "updatedAt",
-            ],  # Excludes token
-        },
-        "public.submissions": {
-            "select": [
-                "submission_id", "project_id", "approved_hours",
-                "approval_status", "reviewed_by", "reviewed_at",
-                "created_at", "updated_at", "hackatime_hours",
-                "airtable_rec_id", "finalized_at", "pending_send_email",
-                "review_passed", "silent_reject", "claim_heartbeat_at",
-                "claimed_at", "claimed_by_id",
-            ],
-        },
         "public.users": {
-            "select": [
-                "user_id", "email", "first_name", "last_name", "birthday",
-                # `role` (scalar text) was dropped upstream and replaced by
-                # `roles` (text[]). Sling stringifies Postgres arrays, so this
-                # lands in the warehouse as text holding an array literal, e.g.
-                # '{user}' -- same shape as fallout.users.roles / macondo.users.roles.
-                "roles", "onboard_complete", "onboarded_at", "address_line_1",
-                "address_line_2", "city", "state", "country", "zip_code",
-                "airtable_rec_id", "hackatime_account", "created_at",
-                "updated_at", "referral_code", "raffle_pos", "is_fraud",
-                "is_sus", "slack_user_id", "hca_id", "verification_status",
-            ],  # Excludes hackatime_access_token, admin_comment, banned_reason
+            "select": ["-hackatime_access_token"],
         },
         "public.hackatime_link_otps": {
-            "select": [
-                "id", "user_id", "email", "expires_at",
-                "is_used", "used_at", "created_at",
-            ],  # Excludes otp_code
+            "select": ["-otp_code"],
         },
-
-        # --- Incremental: large and verified drift-free ---
-        "public.submission_audit_logs": {
-            "mode": "incremental",
-            "primary_key": ["id"],
-            "update_key": "created_at",
+        "public.sticker_tokens": {
+            "select": ["-token"],
         },
-        "public.user_daily_activity": {
-            "mode": "incremental",
-            "primary_key": ["id"],
-            "update_key": "updated_at",
+        # Unredeemed codes are spendable.
+        "public.gift_codes": {
+            "select": ["-code"],
+        },
+        # user_sessions.id is the sessionId login cookie. Sync a SHA-256 of it
+        # instead so rows stay distinct and joinable without being usable.
+        "public.user_sessions": {
+            "sql": """
+                select encode(sha256(convert_to(id, 'UTF8')), 'hex') as id_sha256,
+                       user_id, expires_at, created_at
+                from public.user_sessions
+            """,
         },
 
         # --- Disabled: infrastructure ---
-        "public._prisma_migrations": {"disabled": True},
         "public.pg_stat_statements": {"disabled": True},
         "public.pg_stat_statements_info": {"disabled": True},
     }
