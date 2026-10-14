@@ -26,14 +26,10 @@ club_shop_replication_config = {
         "public.app_settings": None,
         "public.audit_log": None,
         "public.budget_lines": None,
-        "public.club_settings": {
-            "select": [
-                "id", "club_id", "bio", "meeting_day_display",
-                "default_gallery_public", "require_approval_before_public",
-                "notify_review_back", "notify_workshop_decision",
-                "created_at", "updated_at",
-            ],
-        },
+        # notify_review_back / notify_workshop_decision / weekly_digest_email
+        # were dropped upstream (clubs-platform migration 0092) and replaced by
+        # per-user users.email_opt_outs. Nothing sensitive here, so mirror all.
+        "public.club_settings": None,
         "public.clubs": None,
         "public.email_sends": None,
         "public.email_templates": None,
@@ -46,10 +42,7 @@ club_shop_replication_config = {
         "public.hcb_orgs": None,
         "public.hcb_sync_runs": None,
         "public.hcb_tokens": {
-            "select": [
-                "id", "expires_at", "connected_email", "created_at",
-                "updated_at",
-            ],
+            "select": ["-access_token", "-refresh_token"],
         },
         "public.hcb_transaction_overrides": None,
         "public.hcb_transactions": None,
@@ -81,14 +74,7 @@ club_shop_replication_config = {
         "public.user_activity_days": None,
         "public.user_roles": None,
         "public.users": {
-            "select": [
-                "id", "hc_id", "primary_email", "first_name", "last_name",
-                "slack_id", "verification_status", "ysws_eligible",
-                "identity_synced_at", "last_login_at", "created_at",
-                "updated_at", "preferred_name", "phone_number", "birthday",
-                "addresses", "default_ship_to", "hackatime_user_id",
-                "hackatime_linked_at", "build_sandbox", "last_seen_at",
-            ],
+            "select": ["-hackatime_access_token"],
         },
         "public.workshop_applications": None,
         "public.workshop_club_access": None,
