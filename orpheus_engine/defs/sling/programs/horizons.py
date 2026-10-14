@@ -24,26 +24,15 @@ horizons_replication_config = {
     "streams": {
         "public.*": None,
 
-        # --- Incremental: updated_at / updatedAt ---
-        "public.email_jobs": {
-            "mode": "incremental",
-            "primary_key": ["id"],
-            "update_key": "updatedAt",
-        },
-        "public.gift_codes": {
-            "mode": "incremental",
-            "primary_key": ["id"],
-            "update_key": "updated_at",
-        },
-        "public.global_settings": {
-            "mode": "incremental",
-            "primary_key": ["id"],
-            "update_key": "updated_at",
-        },
+        # Mutable tables are full-refresh (all are <25k rows). Horizons writes rows
+        # without bumping updated_at (soft deletes, Joe fraud fields,
+        # screenshot/readme URLs), mutates "append-only" tables
+        # (transactions.fulfilled_at, user_sessions.expires_at), and hard-
+        # deletes rows -- incremental mirrors of these tables drifted on
+        # thousands of rows. Incremental also never backfills columns added
+        # to a select list, and keeps stale column types (projects broke on
+        # 2026-10-01 when hours_justification outgrew varchar(500)).
         "public.projects": {
-            "mode": "incremental",
-            "primary_key": ["project_id"],
-            "update_key": "updated_at",
             "select": [
                 "-id", "-name", "-description", "-playable_url", "-code_url",
                 "-image_url", "-hackatime_names", "-status", "-shipped",
@@ -56,29 +45,13 @@ horizons_replication_config = {
                 "-blocked", "-last_shipped_hours", "-reship_update",
             ],
         },
-        "public.shop_item_variants": {
-            "mode": "incremental",
-            "primary_key": ["variant_id"],
-            "update_key": "updated_at",
-        },
-        "public.shop_items": {
-            "mode": "incremental",
-            "primary_key": ["item_id"],
-            "update_key": "updated_at",
-        },
         "public.sticker_tokens": {
-            "mode": "incremental",
-            "primary_key": ["id"],
-            "update_key": "updatedAt",
             "select": [
                 "id", "email", "rsvpNumber", "isUsed",
                 "usedAt", "createdAt", "updatedAt",
             ],  # Excludes token
         },
         "public.submissions": {
-            "mode": "incremental",
-            "primary_key": ["submission_id"],
-            "update_key": "updated_at",
             "select": [
                 "submission_id", "project_id", "approved_hours",
                 "approval_status", "reviewed_by", "reviewed_at",
@@ -89,9 +62,6 @@ horizons_replication_config = {
             ],
         },
         "public.users": {
-            "mode": "incremental",
-            "primary_key": ["user_id"],
-            "update_key": "updated_at",
             "select": [
                 "user_id", "email", "first_name", "last_name", "birthday",
                 # `role` (scalar text) was dropped upstream and replaced by
@@ -105,28 +75,15 @@ horizons_replication_config = {
                 "is_sus", "slack_user_id", "hca_id", "verification_status",
             ],  # Excludes hackatime_access_token, admin_comment, banned_reason
         },
-
-        # --- Incremental: append-only (created_at) ---
         "public.hackatime_link_otps": {
-            "mode": "incremental",
-            "primary_key": ["id"],
-            "update_key": "created_at",
             "select": [
                 "id", "user_id", "email", "expires_at",
                 "is_used", "used_at", "created_at",
             ],  # Excludes otp_code
         },
+
+        # --- Incremental: large and verified drift-free ---
         "public.submission_audit_logs": {
-            "mode": "incremental",
-            "primary_key": ["id"],
-            "update_key": "created_at",
-        },
-        "public.transactions": {
-            "mode": "incremental",
-            "primary_key": ["transaction_id"],
-            "update_key": "created_at",
-        },
-        "public.user_sessions": {
             "mode": "incremental",
             "primary_key": ["id"],
             "update_key": "created_at",
@@ -141,9 +98,6 @@ horizons_replication_config = {
         "public._prisma_migrations": {"disabled": True},
         "public.pg_stat_statements": {"disabled": True},
         "public.pg_stat_statements_info": {"disabled": True},
-
-        # --- Full-refresh: no suitable update key ---
-        # users_airtable (no id, no timestamps)
     }
 }
 
